@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pocket menace — install on rabbit r1</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d0714; color: #f5ecff; min-height: 100vh;
+    font-family: 'Courier New', ui-monospace, monospace;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card { text-align: center; max-width: 340px; }
+  h1 { color: #ff2e88; font-size: 28px; letter-spacing: 2px; text-shadow: 3px 3px 0 #b9a7ff; }
+  p { font-size: 13px; color: #cfc3ee; margin: 12px 0; line-height: 1.5; }
+  img.qr {
+    width: 220px; height: 220px; border: 6px solid #ff2e88; border-radius: 12px;
+    background: #fff; margin: 12px 0;
+  }
+  .url { font-size: 11px; color: #8f7fb8; word-break: break-all; }
+  kbd { background: #2b1a45; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>pocket menace</h1>
+  <p>a tamagotchi-style punk pet for the rabbit r1.<br>
+  scan with your r1's camera to open it.</p>
+  <img class="qr" id="qr" alt="scan to install">
+  <p class="url" id="url"></p>
+  <p>on the r1: point the camera at the code,<br>or open the terminal and ask for creations.</p>
+</div>
+<script>
+  /* the creation lives next to this page; the QR encodes the creation URL */
+  var here = location.href;
+  var appUrl = here.slice(0, here.lastIndexOf('/') + 1);
+  document.getElementById('url').textContent = appUrl;
+  document.getElementById('qr').src =
+    'https://api.qrserver.com/v1/create-qr-code/?size=220x220&color=0d0714&bgcolor=ffffff&data=' +
+    encodeURIComponent(appUrl);
+</script>
+</body>
+</html>
