@@ -50,3 +50,9 @@ scan the QR with the r1 camera.
 - `js/ui.js` — screens, menus, mini-games
 - `js/game.js` — engine, boot flow, main loop
 - `sprites/` — 13 hand-directed pixel-art sprites (egg + 3 species × baby/teen/idol/grunge)
+
+## install on the r1
+
+point your r1 camera at this:
+
+![pocket menace install QR](pocket-menace-qr.png)
