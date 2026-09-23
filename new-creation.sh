@@ -94,5 +94,12 @@ p { font-size: 14px; color: rgba(255,255,255,0.45); margin-bottom: 32px; text-al
 </html>
 EOF
 
+# add a card to the repo landing page
+if [ -f "$ROOT/index.html" ] && grep -q '<!-- creations -->' "$ROOT/index.html"; then
+  SAFE_DESC=$(printf '%s' "$DESC" | sed 's/[&\|]/\\&/g')
+  sed -i '' "s|<!-- creations -->|<a class=\"card\" href=\"$NAME/install.html\">\n  <h2>$NAME</h2>\n  <span>$SAFE_DESC</span>\n</a>\n<!-- creations -->|" "$ROOT/index.html"
+  echo "added to landing page"
+fi
+
 echo "created $DIR"
 echo "next: build it, then commit + push"
