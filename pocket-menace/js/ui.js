@@ -256,59 +256,79 @@ window.PM = window.PM || {};
     img._m = setTimeout(function () { img.classList.remove('bounce', 'shakeit'); }, ms || 1800);
   };
 
-  /* ---------- tilt mini-game ---------- */
+  /* ---------- feeding game: food falls from the top, tilt to catch (10s) ---------- */
   UI.tiltGame = function (pet, done) {
-    var html = '<div class="tilt"><div class="pick-title">tilt to feed!</div>' +
-      '<div class="tilt-sub">roll the treat into the mouth</div>' +
-      '<div id="tarea"><div id="treat">🍩</div><div id="mouth">👄</div></div>' +
-      '<div class="tilt-score">score <span id="tscore">0</span> · <span id="ttime">25</span>s</div></div>';
+    var W = 210, H = 130; // matches #tarea
+    var html = '<div class="tilt"><div class="pick-title">catch the snacks!</div>' +
+      '<div class="tilt-sub">tilt the r1 · 10 seconds</div>' +
+      '<div id="tarea"><div id="catcher">🧺</div></div>' +
+      '<div class="tilt-score">caught <span id="tscore">0</span> · <span id="ttime">10</span>s</div></div>';
     UI.overlay(html, 'tilt-ov');
-    var score = 0, tx = 90, ty = 40, mx = 90, my = 96;
-    var timeLeft = 25;
-    var treat = el('treat'), area = el('tarea');
-    var treatEmojis = ['🍩', '🍕', '🧃', '🍪', '🍬'];
-    function place() {
-      treat.style.transform = 'translate(' + tx + 'px,' + ty + 'px)';
+    var area = el('tarea'), catcher = el('catcher');
+    var cx = W / 2, cy = H - 20;
+    var score = 0, timeLeft = 10, over = false;
+    var foods = [];
+    var emojis = ['🍩', '🍕', '🧃', '🍪', '🍬', '🍔', '🍇'];
+    function drawCatcher() {
+      catcher.style.left = (cx - 13) + 'px';
+      catcher.style.top = (cy - 13) + 'px';
     }
-    function respawn() {
-      tx = 10 + Math.random() * 160; ty = 5 + Math.random() * 50;
-      treat.textContent = treatEmojis[Math.floor(Math.random() * treatEmojis.length)];
-      place();
+    function spawn() {
+      if (over) return;
+      var s = document.createElement('div');
+      s.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+      s.style.cssText = 'position:absolute;font-size:22px;line-height:1;';
+      var x = 8 + Math.random() * (W - 30), y = -26;
+      s.style.left = x + 'px';
+      s.style.top = y + 'px';
+      area.appendChild(s);
+      foods.push({ el: s, x: x, y: y, v: 80 + Math.random() * 60 }); // px/sec
     }
-    respawn();
-    /* tap-to-nudge fallback (desktop / no accelerometer) */
-    area.addEventListener('click', function (e) {
-      var r = area.getBoundingClientRect();
-      var cx = e.clientX - r.left - 12, cy = e.clientY - r.top - 12;
-      tx += Math.max(-34, Math.min(34, (cx - tx) * 0.6));
-      ty += Math.max(-34, Math.min(34, (cy - ty) * 0.6));
-      place();
-    });
+    /* tilt: SDK x positive = tilt right */
     var onMove = function (d) {
-      tx = Math.max(0, Math.min(180, tx + d.x * 6));
-      ty = Math.max(0, Math.min(100, ty - d.y * 6));
-      place();
-      var dx = tx - mx, dy = ty - my;
-      if (dx * dx + dy * dy < 500) {
-        score++;
-        el('tscore').textContent = score;
-        PM.hw.petSay(pet, 'happy');
-        respawn();
-      }
+      cx = Math.max(18, Math.min(W - 18, cx + d.x * 4.5));
+      drawCatcher();
     };
     PM.hw.accel.onMove(onMove);
+    /* desktop fallback: tap left/right half to nudge the basket */
+    area.addEventListener('click', function (e) {
+      var r = area.getBoundingClientRect();
+      cx = Math.max(18, Math.min(W - 18, cx + ((e.clientX - r.left) < W / 2 ? -28 : 28)));
+      drawCatcher();
+    });
+    var last = Date.now();
+    var spawnT = setInterval(spawn, 550);
+    spawn(); spawn();
+    var step = setInterval(function () {
+      var now = Date.now(), dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      for (var i = foods.length - 1; i >= 0; i--) {
+        var f = foods[i];
+        f.y += f.v * dt;
+        if (f.y >= cy - 14 && f.y <= cy + 12 && Math.abs((f.x + 11) - cx) < 28) {
+          score++;
+          el('tscore').textContent = score;
+          f.el.remove(); foods.splice(i, 1);
+        } else if (f.y > H + 12) {
+          f.el.remove(); foods.splice(i, 1);
+        } else {
+          f.el.style.top = f.y + 'px';
+        }
+      }
+    }, 33);
+    drawCatcher();
     var timer = setInterval(function () {
       timeLeft--;
       var tt = el('ttime');
       if (tt) tt.textContent = timeLeft;
-      if (timeLeft <= 0) {
-        clearInterval(timer);
+      if (timeLeft <= 0 && !over) {
+        over = true;
+        clearInterval(timer); clearInterval(step); clearInterval(spawnT);
         PM.hw.accel.onMove(null);
         UI.hideOverlay();
         done(score);
       }
     }, 1000);
-    place();
   };
 
   /* ---------- sleep overlay ---------- */

@@ -17,6 +17,12 @@ window.PM = window.PM || {};
   G.boot = function () {
     PM.hw.init();
     PM.ui.boot();
+    /* save whenever the webview might die — the r1 gives no warning */
+    function persist() { if (pet) PM.saveNow(pet); }
+    document.addEventListener('pagehide', persist);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) persist();
+    });
     /* ?demo=1 → instant test pet (handy on-device too) */
     if (/\bdemo=1\b/.test(location.search)) {
       setTimeout(function () {
@@ -114,7 +120,7 @@ window.PM = window.PM || {};
       handleEvents(ev);
       PM.ui.render(pet);
       saveT += 5;
-      if (saveT >= 30) { saveT = 0; PM.saveNow(pet); }
+      if (saveT >= 15) { saveT = 0; PM.saveNow(pet); }
       ambientT += 5;
       if (ambientT >= 45) { ambientT = 0; G.ambientCheck(); }
     }, 5000);
@@ -211,9 +217,8 @@ window.PM = window.PM || {};
 
   G.play = function () {
     ensureAwake();
-    var hasTilt = PM.hw.has.accel ||
-      (window.creationSensors && window.creationSensors.accelerometer);
-    if (hasTilt) {
+    PM.hw.accel.start(); // retry in case the bridge injected late
+    if (PM.hw.accel.live()) {
       PM.ui.tiltGame(pet, function (score) {
         var mood = PM.act.play(pet, Math.min(20, score * 2));
         PM.ui.render(pet);
@@ -303,6 +308,7 @@ window.PM = window.PM || {};
     var items = [
       { label: 'voice: ' + pet.voice, sub: 'big/chatty/off', icon: '🔊', act: 'voice' },
       { label: 'time warp: ' + (pet.turbo ? 'ON' : 'off'), sub: 'dev cheat', icon: '⏩', act: 'turbo' },
+      { label: 'hw check', sub: 'sensor status', icon: '🔧', act: 'hwcheck' },
       { label: 'fresh start', sub: 'new egg (!!)', icon: '🥚', act: 'reset' },
       { label: 'quit', sub: 'close creation', icon: '🚪', act: 'quit' }
     ];
@@ -316,9 +322,16 @@ window.PM = window.PM || {};
       } else if (it.act === 'reset') {
         PM.wipe(); pet = null;
         location.reload();
+      } else if (it.act === 'hwcheck') {
+        PM.hw.accel.start();
+        PM.hw.camera.ensure();
+        PM.hw.mic.ensure();
+        PM.ui.toast(PM.hw.diag());
       } else if (it.act === 'quit') {
         PM.saveNow(pet);
-        PM.hw.close();
+        PM.ui.toast('saved. bye!');
+        /* give the async creationStorage write a beat to flush */
+        setTimeout(function () { PM.hw.close(); }, 600);
       }
       PM.saveNow(pet);
     });

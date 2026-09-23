@@ -188,12 +188,7 @@ html, body {
   position: relative; width: 210px; height: 130px; margin: 0 auto;
   border: 2px solid #ff2e88; border-radius: 10px; background: #160b24; overflow: hidden;
 }
-#treat { position: absolute; left: 0; top: 0; font-size: 22px; }
-#mouth {
-  position: absolute; left: 90px; top: 96px; font-size: 24px;
-  border: 2px dashed #b9a7ff; border-radius: 50%; width: 40px; height: 40px;
-  display: flex; align-items: center; justify-content: center;
-}
+#catcher { position: absolute; left: 0; top: 0; font-size: 26px; line-height: 1; }
 .tilt-score { text-align: center; font-size: 11px; margin-top: 8px; color: #ff7ab8; font-weight: bold; }
 
 .sleepov { text-align: center; padding-top: 60px; }

@@ -54,20 +54,56 @@ window.PM = window.PM || {};
   /* ---------- accelerometer ---------- */
   var accelCb = null, lastShake = 0, rockBuf = [];
   HW.accel = {
+    frames: 0,
+    dead: false,
+    _started: false,
     start: function () {
+      /* retry allowed if a previous attempt died (bridge may inject late) */
+      if (HW.accel._started && !HW.accel.dead) return true;
+      HW.accel.dead = false;
+      HW.accel._started = true;
+      var acc = null;
+      try { acc = window.creationSensors && window.creationSensors.accelerometer; } catch (e) {}
+      if (!acc) { HW.accel.dead = true; return false; }
+      function go() {
+        if (HW.accel.dead) return;
+        try {
+          var r = acc.start(function (d) {
+            if (!d) return;
+            HW.accel.frames++;
+            HW.has.accel = true;
+            HW._accelFrame(d);
+          }, { frequency: 30 });
+          /* start() may reject async — a rejection means the sensor is dead */
+          if (r && typeof r.catch === 'function') {
+            r.catch(function () { HW.accel.dead = true; });
+          }
+        } catch (e) { HW.accel.dead = true; }
+      }
+      /* the SDK exposes isAvailable(); some builds need it before start().
+         if it hangs or rejects, try start() anyway (optimistic). */
       try {
-        if (!window.creationSensors || !window.creationSensors.accelerometer) return false;
-        window.creationSensors.accelerometer.start(function (d) {
-          HW.has.accel = true;
-          HW._accelFrame(d);
-        }, { frequency: 30 });
-        return true;
-      } catch (e) { return false; }
+        if (acc.isAvailable) {
+          var settled = false;
+          var to = setTimeout(function () {
+            if (!settled) { settled = true; go(); }
+          }, 2500);
+          acc.isAvailable().then(function (ok) {
+            if (settled) return; settled = true; clearTimeout(to);
+            if (ok) go(); else HW.accel.dead = true;
+          }).catch(function () {
+            if (settled) return; settled = true; clearTimeout(to); go();
+          });
+        } else go();
+      } catch (e) { go(); }
+      return true;
     },
     stop: function () {
       try { window.creationSensors.accelerometer.stop(); } catch (e) {}
     },
-    onMove: function (fn) { accelCb = fn; }
+    onMove: function (fn) { accelCb = fn; },
+    /* true only once real sensor frames have actually arrived */
+    live: function () { return HW.accel.frames > 0 && !HW.accel.dead; }
   };
 
   HW._accelFrame = function (d) {
@@ -98,23 +134,48 @@ window.PM = window.PM || {};
   };
 
   /* ---------- camera ---------- */
-  var videoEl = null, camStream = null;
+  var videoEl = null, camStream = null, camFailed = false, camPromise = null;
+  function withTimeout(p, ms, tag) {
+    return Promise.race([p, new Promise(function (_, rej) {
+      setTimeout(function () { rej(new Error('timeout:' + tag)); }, ms);
+    })]);
+  }
   HW.camera = {
     ensure: function () {
       if (camStream) return Promise.resolve(true);
+      if (camFailed) return Promise.resolve(false);
+      if (camPromise) return camPromise;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        camFailed = true;
         return Promise.resolve(false);
       }
-      return navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false })
-        .then(function (stream) {
+      function tryGet(constraints) {
+        return navigator.mediaDevices.getUserMedia(constraints).then(function (stream) {
           camStream = stream;
           videoEl = document.createElement('video');
           videoEl.setAttribute('playsinline', '');
+          videoEl.setAttribute('autoplay', '');
           videoEl.muted = true;
           videoEl.srcObject = stream;
-          return videoEl.play().then(function () { HW.has.camera = true; return true; });
-        })
-        .catch(function () { return false; });
+          /* some webviews only feed frames to attached video elements */
+          videoEl.style.cssText = 'position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;';
+          document.body.appendChild(videoEl);
+          return withTimeout(videoEl.play(), 5000, 'play').then(function () {
+            if (videoEl.videoWidth === 0) throw new Error('no frames');
+            HW.has.camera = true;
+            return true;
+          });
+        });
+      }
+      /* never hang: bounded total time, then remember the failure so every
+         later call fails fast instead of re-prompting */
+      camPromise = withTimeout(
+        tryGet({ video: { width: 320, height: 240 }, audio: false })
+          .catch(function () { return tryGet({ video: true, audio: false }); }),
+        12000, 'camera'
+      ).then(function (ok) { return !!ok; })
+       .catch(function () { camFailed = true; camPromise = null; return false; });
+      return camPromise;
     },
     /* capture a frame, return average color + brightness */
     snap: function () {
@@ -213,6 +274,34 @@ window.PM = window.PM || {};
 
   /* ---------- LLM: brain + voice ---------- */
   var llmSeq = 0, llmPending = {};
+  /* Paced speech queue. The r1 speaker gets overrun if we fire messages
+     back-to-back, so spoken lines are serialized with breathing room and
+     overflow is dropped (latest waiting line wins). ONLY the character's
+     own line is ever sent with wantsR1Response — never an instruction
+     prompt, so the device can't read our prompts aloud. */
+  var speakQ = [], speaking = false, lastSpokeAt = 0;
+  function pumpSpeech() {
+    if (speaking) return;
+    var item = speakQ.shift();
+    if (!item) return;
+    speaking = true;
+    var gap = Math.max(0, 3000 - (Date.now() - lastSpokeAt));
+    setTimeout(function () {
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify({
+          message: item.line,
+          useLLM: false,
+          wantsR1Response: true,
+          wantsJournalEntry: !!item.journal
+        }));
+      } catch (e) {}
+      lastSpokeAt = Date.now();
+      /* estimated talk time (~60ms/char, min 2.5s): the next line never
+         starts before this one has been said aloud */
+      var est = Math.max(2500, item.line.length * 60);
+      setTimeout(function () { speaking = false; pumpSpeech(); }, est);
+    }, gap);
+  }
   HW.llm = {
     ask: function (prompt, timeoutMs) {
       return new Promise(function (resolve) {
@@ -234,16 +323,29 @@ window.PM = window.PM || {};
         setTimeout(function () { finish(null); }, timeoutMs || 7000);
       });
     },
-    /* speak through the r1 speaker. journal=true logs to r1 journal. */
-    speak: function (text, journal) {
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify({
-          message: text,
-          useLLM: false,
-          wantsR1Response: true,
-          wantsJournalEntry: !!journal
-        }));
-      } catch (e) {}
+    /* queue a literal line for the r1 speaker. any line still waiting is
+       replaced, so a burst of events can't pile up into endless talking. */
+    sayLine: function (line, journal) {
+      line = String(line || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+      if (!line) return;
+      speakQ[0] = { line: line, journal: !!journal };
+      pumpSpeech();
+    },
+    /* have the LLM voice a line AS the pet: generate silently first, then
+       speak ONLY the resulting line — the prompt itself is never spoken. */
+    voiceLine: function (pet, mood, opts) {
+      opts = opts || {};
+      var prompt = 'You are ' + pet.name + ', a punk y2k digital pet. Mood: ' + mood + '. ' +
+        'Reply with exactly one short lowercase line, dry and a little feral, under 12 words. ' +
+        'No quotes, no narration, just the line itself.';
+      HW.llm.ask(prompt, 8000).then(function (line) {
+        var spoken = line || PM.pick(PM.LINES[mood] || PM.LINES.idle);
+        /* if the model echoed the instructions, fall back to a local line */
+        if (/punk y2k|under 12 words|no narration|as an ai/i.test(spoken)) {
+          spoken = PM.pick(PM.LINES[mood] || PM.LINES.idle);
+        }
+        HW.llm.sayLine(spoken, opts.journal);
+      });
     },
     /* log a line to the r1 journal without speaking */
     journal: function (text) {
@@ -253,20 +355,6 @@ window.PM = window.PM || {};
           useLLM: false,
           wantsR1Response: false,
           wantsJournalEntry: true
-        }));
-      } catch (e) {}
-    },
-    /* have the LLM voice a line AS the pet (big moments only by default) */
-    voiceLine: function (petName, mood, journal) {
-      var prompt = 'You are ' + petName + ', a punk y2k digital pet (imp-bunny/alley-cat/glitch-mouse). ' +
-        'Mood: ' + mood + '. Say ONE short line in your voice: lowercase, dry, a little feral, under 12 words. ' +
-        'No quotes, no narration, just the line.';
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify({
-          message: prompt,
-          useLLM: true,
-          wantsR1Response: true,
-          wantsJournalEntry: !!journal
         }));
       } catch (e) {}
     }
@@ -311,7 +399,7 @@ window.PM = window.PM || {};
     var shouldSpeak = opts.speak || pet.voice === 'chatty' ||
       (pet.voice === 'big' && opts.big);
     if (shouldSpeak) {
-      HW.llm.voiceLine(pet.name, mood, opts.journal);
+      HW.llm.voiceLine(pet, mood, opts);
       show(fallback); // show text immediately, voice follows
       return;
     }
@@ -325,6 +413,13 @@ window.PM = window.PM || {};
 
   HW.close = function () {
     try { closeWebView.postMessage(''); } catch (e) {}
+  };
+
+  /* one-line hardware status for on-device debugging */
+  HW.diag = function () {
+    return 'accel:' + (HW.accel.live() ? HW.accel.frames + 'f' : 'dead') +
+      ' cam:' + (HW.has.camera ? 'ok' : 'no') +
+      ' mic:' + (HW.has.mic ? 'ok' : 'no');
   };
 
   HW.init = function () {

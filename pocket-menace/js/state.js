@@ -217,14 +217,20 @@ window.PM = window.PM || {};
     }
   };
 
-  /* ---------- persistence ---------- */
+  /* ---------- persistence ----------
+     belt and suspenders: creationStorage is async and may not flush before
+     the webview dies, so every save also goes to localStorage (sync).
+     loads prefer creationStorage but fall back to localStorage. */
   PM.saveNow = function (s) {
+    if (!s) return;
+    var raw;
+    try { raw = btoa(unescape(encodeURIComponent(JSON.stringify(s)))); }
+    catch (e) { return; }
+    try { localStorage.setItem(SAVE_KEY, raw); } catch (e) {}
     try {
-      var payload = btoa(unescape(encodeURIComponent(JSON.stringify(s))));
       if (window.creationStorage && window.creationStorage.plain) {
-        window.creationStorage.plain.setItem(SAVE_KEY, payload);
-      } else {
-        try { localStorage.setItem(SAVE_KEY, payload); } catch (e) {}
+        var r = window.creationStorage.plain.setItem(SAVE_KEY, raw);
+        if (r && typeof r.catch === 'function') r.catch(function () {});
       }
     } catch (e) {}
   };
@@ -235,19 +241,24 @@ window.PM = window.PM || {};
       try { return JSON.parse(decodeURIComponent(escape(atob(raw)))); }
       catch (e) { return null; }
     }
+    function fromLocal() {
+      try { return parse(localStorage.getItem(SAVE_KEY)); }
+      catch (e) { return null; }
+    }
     return new Promise(function (resolve) {
-      function fromLocal() {
-        try { resolve(parse(localStorage.getItem(SAVE_KEY))); }
-        catch (e) { resolve(null); }
-      }
+      var settled = false;
+      function done(v) { if (!settled) { settled = true; resolve(v); } }
+      /* never hang boot on a stalled bridge */
+      setTimeout(function () { done(fromLocal()); }, 2500);
       try {
         if (window.creationStorage && window.creationStorage.plain) {
           var p = window.creationStorage.plain.getItem(SAVE_KEY);
           if (p && typeof p.then === 'function') {
-            p.then(function (raw) { resolve(parse(raw)); }).catch(fromLocal);
-          } else { resolve(parse(p)); }
-        } else fromLocal();
-      } catch (e) { fromLocal(); }
+            p.then(function (raw) { done(parse(raw) || fromLocal()); })
+             .catch(function () { done(fromLocal()); });
+          } else { done(parse(p) || fromLocal()); }
+        } else done(fromLocal());
+      } catch (e) { done(fromLocal()); }
     });
   };
 
