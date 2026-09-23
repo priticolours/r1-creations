@@ -19,26 +19,37 @@
     background: #fff; margin: 12px 0;
   }
   .url { font-size: 11px; color: #8f7fb8; word-break: break-all; }
-  kbd { background: #2b1a45; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 </style>
 </head>
 <body>
 <div class="card">
   <h1>pocket menace</h1>
   <p>a tamagotchi-style punk pet for the rabbit r1.<br>
-  scan with your r1's camera to open it.</p>
+  scan with your r1's camera to install.</p>
   <img class="qr" id="qr" alt="scan to install">
   <p class="url" id="url"></p>
-  <p>on the r1: point the camera at the code,<br>or open the terminal and ask for creations.</p>
+  <p>on the r1: point the camera at the code.</p>
 </div>
 <script>
-  /* the creation lives next to this page; the QR encodes the creation URL */
+  /* the r1 expects the QR to be a JSON payload, not a bare URL. bump ?v=N
+     to force a fresh install after updates (the r1 caches by install URL).
+     NOTE: the install metadata goes through rabbit's content filter —
+     "dies" in the description got rejected as "not a valid creation",
+     "menace" in the title passed fine. keep this wording clean. */
   var here = location.href;
-  var appUrl = here.slice(0, here.lastIndexOf('/') + 1);
+  var base = here.slice(0, here.lastIndexOf('/') + 1);
+  var appUrl = base + '?v=3';
+  var qrData = JSON.stringify({
+    title: 'pocket menace',
+    url: appUrl,
+    description: 'a tamagotchi-style punk pet for your rabbit r1',
+    iconUrl: base + 'sprites/egg.png',
+    themeColor: '#FF2E88'
+  });
   document.getElementById('url').textContent = appUrl;
   document.getElementById('qr').src =
     'https://api.qrserver.com/v1/create-qr-code/?size=220x220&color=0d0714&bgcolor=ffffff&data=' +
-    encodeURIComponent(appUrl);
+    encodeURIComponent(qrData);
 </script>
 </body>
 </html>
